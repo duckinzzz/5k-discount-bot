@@ -1,0 +1,7 @@
+aiogram
+python-dotenv
+watchfiles
+aiohttp
+pdf417gen
+Pillow
+requests

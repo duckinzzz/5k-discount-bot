@@ -1,0 +1,14 @@
+services:
+  bot:
+    build: .
+    container_name: 5k-discount-bot
+    restart: unless-stopped
+    command: python run.py
+    env_file:
+      - .env
+    stop_grace_period: 1m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

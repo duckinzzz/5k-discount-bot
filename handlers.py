@@ -43,12 +43,15 @@ async def refresh_barcode(callback: types.CallbackQuery) -> None:
 
         photo, barcode_path = await get_barcode_image()
         try:
-            await callback.message.answer_photo(
+            barcode_message = await callback.message.answer_photo(
                 photo=photo,
                 caption=BARCODE_CAPTION,
                 reply_markup=await kb.refresh_kb(),
             )
         finally:
             await asyncio.to_thread(barcode_path.unlink, missing_ok=True)
+
+        await asyncio.sleep(24 * 60 * 60)
+        await barcode_message.delete()
     except Exception as error:
         await send_error(callback.bot, chat_id, error)

@@ -4,46 +4,23 @@ from pathlib import Path
 from uuid import uuid4
 
 import pdf417gen
-import requests
 from aiogram.types import FSInputFile
 from PIL import Image
 
-from config import HTTP_TIMEOUT_SECONDS, X5M_API_BASE, X5M_BEARER_TOKEN
 from core import logger
-
-HEADERS = {
-    "accept": "application/json",
-    "x-capabilities": "tenant=ts5;clientVersion=3.29.0;divKitVersion=31.6.0;OS=Android/10;source=mob-app;teamId=x5m;timeZone=-5",
-    "authorization": f"Bearer {X5M_BEARER_TOKEN}",
-    "accept-charset": "UTF-8",
-    "user-agent": "ktor-client",
-    "host": "x5m.x5.ru",
-    "connection": "Keep-Alive",
-    "accept-encoding": "gzip",
-}
+from x5_client import x5_mobile_client
 
 BARCODE_IMAGE_SIZE = (472, 1024)
 
 
 def get_card_number() -> str:
-    resp = requests.get(
-        f"{X5M_API_BASE.rstrip('/')}/common/api/cards/public/v1/card-list",
-        headers=HEADERS,
-        timeout=HTTP_TIMEOUT_SECONDS,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    data = x5_mobile_client.get_json("/common/api/cards/public/v1/card-list")
     return data["data"]["cards"][0]["card_number"]
 
 
 def get_barcode_data() -> str:
-    resp = requests.get(
-        f"{X5M_API_BASE.rstrip('/')}/common/api/cards/public/v1/barcode",
-        headers=HEADERS,
-        timeout=HTTP_TIMEOUT_SECONDS,
-    )
-    resp.raise_for_status()
-    return resp.json()["data"]["barcode"]
+    data = x5_mobile_client.get_json("/common/api/cards/public/v1/barcode")
+    return data["data"]["barcode"]
 
 
 def generate_pdf417(data: str):

@@ -1,41 +1,49 @@
 import base64
+import http.cookiejar
 import json
-import os
-import threading
 import time
+from pathlib import Path
 from typing import Any
 
-import requests
-from dotenv import set_key
+from curl_cffi import requests
 
-from config import (
-    DOTENV_PATH,
-    HTTP_TIMEOUT_SECONDS,
-    X5M_ACCESS_TOKEN,
-    X5M_API_BASE,
-    X5M_CLIENT_ID,
-    X5M_REFRESH_TOKEN,
-    X5M_TOKEN_URL,
-)
+from config import HTTP_TIMEOUT_SECONDS, X5_WEB_COOKIES_PATH
 from core import logger
 
-API_HEADERS = {
-    "accept": "application/json",
-    "x-capabilities": "tenant=ts5;clientVersion=3.29.0;divKitVersion=31.6.0;OS=Android/10;source=mob-app;teamId=x5m;timeZone=-5",
-    "accept-charset": "UTF-8",
-    "user-agent": "ktor-client",
-    "host": "x5m.x5.ru",
-    "connection": "Keep-Alive",
-    "accept-encoding": "gzip",
+WEB_SESSION_URL = "https://5ka.ru/api/auth/session"
+BROWSER_IMPERSONATION = "chrome136"
+WEB_SESSION_HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "ru,en;q=0.9",
+    "referer": "https://5ka.ru/profile/",
+    "user-agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/136.0.0.0 Safari/537.36"
+    ),
 }
-
-TOKEN_HEADERS = {
-    "accept": "application/json",
-    "content-type": "application/x-www-form-urlencoded",
-    "user-agent": "Dalvik/2.1.0 (Linux; U; Android 10; ONEPLUS A5000 Build/QKQ1.191014.012)",
+LOYALTY_HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "user-agent": WEB_SESSION_HEADERS["user-agent"],
 }
-
+GET_CARDS_URL = "https://gw-ly5.x5.ru/api/cards/el5.cards.CardsService/GetCards"
+GET_BARCODE_URL = "https://gw-ly5.x5.ru/api/cards/el5.cards.CardsService/GetBarCode"
 TOKEN_REFRESH_SKEW_SECONDS = 60
+CARD_TYPE_PRIORITY = {
+    "VIPCLUB": 0,
+    "X5VC": 1,
+    "VC5": 2,
+    "TC5": 3,
+    "YCC": 4,
+    "X5BN": 5,
+    "X5BU": 6,
+    "PBCB": 7,
+    "5ACB": 8,
+    "USPC": 9,
+    "TSPC": 10,
+    "UCSR": 11,
+    "ZOZH": 12,
+}
 
 
 def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
@@ -61,139 +69,100 @@ def _parse_expiry(token: str | None) -> int | None:
         return None
 
 
-class X5MobileClient:
-    def __init__(
-        self,
-        access_token: str | None,
-        refresh_token: str | None,
-    ) -> None:
-        self._lock = threading.Lock()
-        self._access_token = access_token
-        self._refresh_token = refresh_token
-        self._access_token_expires_at = _parse_expiry(access_token)
+class X5WebClient:
+    def __init__(self, cookies_path: Path) -> None:
+        self._cookies_path = cookies_path
+        self._session_token: str | None = None
+        self._session_token_expires_at = _parse_expiry(None)
 
-    def _build_headers(self, access_token: str, extra_headers: dict[str, str] | None = None) -> dict[str, str]:
-        headers = {
-            **API_HEADERS,
-            "authorization": f"Bearer {access_token}",
-        }
-        if extra_headers:
-            headers.update(extra_headers)
-        return headers
+    def _load_cookies(self) -> http.cookiejar.MozillaCookieJar:
+        jar = http.cookiejar.MozillaCookieJar(str(self._cookies_path))
+        jar.load(ignore_discard=True, ignore_expires=True)
+        return jar
 
-    def _access_token_is_valid(self) -> bool:
-        if not self._access_token:
+    def _persist_cookies(self, cookies: http.cookiejar.CookieJar) -> None:
+        jar = http.cookiejar.MozillaCookieJar(str(self._cookies_path))
+        for cookie in cookies:
+            jar.set_cookie(cookie)
+        jar.save(ignore_discard=True, ignore_expires=True)
+
+    def _session_token_is_valid(self) -> bool:
+        if not self._session_token:
             return False
 
-        if self._access_token_expires_at is None:
+        if self._session_token_expires_at is None:
             return True
 
-        return time.time() < self._access_token_expires_at - TOKEN_REFRESH_SKEW_SECONDS
+        return time.time() < self._session_token_expires_at - TOKEN_REFRESH_SKEW_SECONDS
 
-    def _persist_tokens(self, access_token: str, refresh_token: str) -> None:
-        os.environ["X5M_ACCESS_TOKEN"] = access_token
-        os.environ["X5M_BEARER_TOKEN"] = access_token
-        os.environ["X5M_REFRESH_TOKEN"] = refresh_token
+    def _refresh_session_token(self) -> str:
+        session = requests.Session(impersonate=BROWSER_IMPERSONATION)
+        session.cookies.update(self._load_cookies())
+        session.headers.update(WEB_SESSION_HEADERS)
 
-        if not DOTENV_PATH.exists():
-            return
+        response = session.get(WEB_SESSION_URL, timeout=HTTP_TIMEOUT_SECONDS)
+        response.raise_for_status()
 
-        for key, value in (
-            ("X5M_ACCESS_TOKEN", access_token),
-            ("X5M_BEARER_TOKEN", access_token),
-            ("X5M_REFRESH_TOKEN", refresh_token),
-        ):
-            set_key(
-                str(DOTENV_PATH),
-                key,
-                value,
-                quote_mode="never",
-                encoding="utf-8",
+        payload = response.json()
+        token = payload.get("user", {}).get("token")
+        if not token:
+            raise RuntimeError(
+                "5ka web session token is unavailable; refresh cookies-5ka-ru.txt",
             )
 
-    def refresh_tokens(self, *, force: bool = False, failed_access_token: str | None = None) -> None:
-        with self._lock:
-            if failed_access_token and failed_access_token != self._access_token and self._access_token_is_valid():
-                return
+        self._persist_cookies(session.cookies.jar)
+        self._session_token = token
+        self._session_token_expires_at = _parse_expiry(token)
+        logger.info("5ka web session token refreshed and cookies persisted")
+        return token
 
-            if not force and self._access_token_is_valid():
-                return
+    def get_session_token(self) -> str:
+        if self._session_token_is_valid():
+            return self._session_token
 
-            if not self._refresh_token:
-                raise RuntimeError("X5M_REFRESH_TOKEN is missing, cannot refresh expired access token")
+        return self._refresh_session_token()
 
-            response = requests.post(
-                X5M_TOKEN_URL,
-                headers=TOKEN_HEADERS,
-                data={
-                    "refresh_token": self._refresh_token,
-                    "grant_type": "refresh_token",
-                    "client_id": X5M_CLIENT_ID,
-                },
-                timeout=HTTP_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-
-            payload = response.json()
-            access_token = payload["access_token"]
-            refresh_token = payload.get("refresh_token") or self._refresh_token
-
-            self._access_token = access_token
-            self._refresh_token = refresh_token
-            self._access_token_expires_at = _parse_expiry(access_token)
-
-            if self._access_token_expires_at is None:
-                expires_in = payload.get("expires_in")
-                if expires_in is not None:
-                    self._access_token_expires_at = int(time.time()) + int(expires_in)
-
-            self._persist_tokens(access_token, refresh_token)
-            logger.info("X5M tokens refreshed")
-
-    def get_access_token(self) -> str:
-        if not self._access_token_is_valid():
-            self.refresh_tokens()
-
-        if not self._access_token:
-            raise RuntimeError("X5M access token is unavailable")
-
-        return self._access_token
-
-    def request(self, method: str, path: str, **kwargs) -> requests.Response:
-        url = f"{X5M_API_BASE.rstrip('/')}/{path.lstrip('/')}"
-        extra_headers = kwargs.pop("headers", None)
-
-        access_token = self.get_access_token()
-        response = requests.request(
-            method,
+    def _get_json(self, url: str) -> dict[str, Any]:
+        response = requests.get(
             url,
-            headers=self._build_headers(access_token, extra_headers),
+            headers={
+                **LOYALTY_HEADERS,
+                "authorization": f"Bearer {self.get_session_token()}",
+            },
+            impersonate=BROWSER_IMPERSONATION,
             timeout=HTTP_TIMEOUT_SECONDS,
-            **kwargs,
         )
-
-        if response.status_code == 401:
-            logger.warning("X5M API returned 401 for %s %s, refreshing tokens", method.upper(), path)
-            response.close()
-            self.refresh_tokens(force=True, failed_access_token=access_token)
-            access_token = self.get_access_token()
-            response = requests.request(
-                method,
-                url,
-                headers=self._build_headers(access_token, extra_headers),
-                timeout=HTTP_TIMEOUT_SECONDS,
-                **kwargs,
-            )
-
-        return response
-
-    def get_json(self, path: str, **kwargs) -> dict[str, Any]:
-        response = self.request("GET", path, **kwargs)
         response.raise_for_status()
         return response.json()
 
+    def get_cards(self) -> list[dict[str, Any]]:
+        data = self._get_json(GET_CARDS_URL)
+        return data["data"]["cards"]
 
-x5_mobile_client = X5MobileClient(
-    access_token=X5M_ACCESS_TOKEN,
-    refresh_token=X5M_REFRESH_TOKEN,
-)
+    def get_card_number(self) -> str:
+        cards = self.get_cards()
+        active_cards = [card for card in cards if card.get("cardStatus") == "ACTIVE"]
+        if not active_cards:
+            raise RuntimeError("Active 5ka loyalty card not found")
+
+        card = min(
+            active_cards,
+            key=lambda item: CARD_TYPE_PRIORITY.get(item.get("cardType"), 999),
+        )
+        card_number = card.get("cardNo")
+        if not card_number:
+            raise RuntimeError("5ka loyalty card number is missing")
+
+        return card_number
+
+    def get_barcode_data(self, card_number: str | None = None) -> str:
+        current_card_number = card_number or self.get_card_number()
+        data = self._get_json(f"{GET_BARCODE_URL}/{current_card_number}")
+        barcode = data["data"]["barcode"]
+        if not barcode:
+            raise RuntimeError("5ka barcode is missing")
+
+        return barcode
+
+
+x5_web_client = X5WebClient(cookies_path=X5_WEB_COOKIES_PATH)

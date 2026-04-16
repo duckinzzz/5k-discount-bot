@@ -4,4 +4,4 @@ watchfiles
 aiohttp
 pdf417gen
 Pillow
-requests
+curl_cffi

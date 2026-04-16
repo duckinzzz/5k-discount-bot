@@ -6,6 +6,8 @@ services:
     command: python run.py
     env_file:
       - .env
+    volumes:
+      - ./cookies-5ka-ru.txt:/app/cookies-5ka-ru.txt
     stop_grace_period: 1m
     logging:
       driver: "json-file"

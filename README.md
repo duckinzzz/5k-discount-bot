@@ -1,8 +1,8 @@
 # aiogram_template
 
 1. Create `.env` based on `.env.example`.
-
-2. Run
+2. Put web cookies into `cookies-5ka-ru.txt`.
+3. Run
 
 - Locally
 ```bash

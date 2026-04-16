@@ -2,7 +2,7 @@ services:
   bot:
     build: .
     container_name: 5k-discount-bot-DEV
-    command: sh -c "watchfiles 'python run.py' ."
+    command: sh -c "watchfiles --ignore-paths 'cookies-5ka-ru.txt' 'python run.py' ."
     env_file:
       - .env
     volumes:

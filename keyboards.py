@@ -8,6 +8,6 @@ REFRESH_BARCODE_CALLBACK = "refresh_barcode"
 async def refresh_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=REFRESH_BUTTON_TEXT, callback_data=REFRESH_BARCODE_CALLBACK)],
+            [InlineKeyboardButton(text=REFRESH_BUTTON_TEXT, style='danger', callback_data=REFRESH_BARCODE_CALLBACK)],
         ]
     )

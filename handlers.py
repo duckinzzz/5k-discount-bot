@@ -1,11 +1,10 @@
 import asyncio
 
 from aiogram import F, Router, types
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 
 import keyboards as kb
-from config import ADMIN_ID, BARCODE_CAPTION, START_MESSAGE_TEXT
+from config import ADMIN_ID, START_MESSAGE_TEXT
 from keyboards import REFRESH_BARCODE_CALLBACK
 from utils import get_barcode_image, send_error
 
@@ -35,23 +34,18 @@ async def refresh_barcode(callback: types.CallbackQuery) -> None:
         if not callback.message:
             return
 
-        try:
-            await callback.message.delete()
-        except TelegramBadRequest as error:
-            if "message to delete not found" not in str(error).lower():
-                raise
+        loading_msg = await callback.message.answer('Загрузка...')
 
         photo, barcode_path = await get_barcode_image()
         try:
+            await loading_msg.delete()
             barcode_message = await callback.message.answer_photo(
                 photo=photo,
-                caption=BARCODE_CAPTION,
-                reply_markup=await kb.refresh_kb(),
             )
         finally:
             await asyncio.to_thread(barcode_path.unlink, missing_ok=True)
 
-        await asyncio.sleep(24 * 60 * 60)
+        await asyncio.sleep(60 * 30)
         await barcode_message.delete()
     except Exception as error:
         await send_error(callback.bot, chat_id, error)

@@ -14,9 +14,8 @@ ENV = os.getenv("ENV", "prod").lower()
 X5_WEB_COOKIES_PATH = BASE_DIR / "cookies-5ka-ru.txt"
 
 HTTP_TIMEOUT_SECONDS = 15.0
-START_MESSAGE_TEXT = "Нажмите кнопку для получения штрих-кода"
-BARCODE_CAPTION = "Ваш штрих-код"
-REFRESH_BUTTON_TEXT = "Обновить"
+START_MESSAGE_TEXT = "ㅤ"
+REFRESH_BUTTON_TEXT = "Обновить штрих-код"
 
 if not BOT_TOKEN or BOT_TOKEN == "NO_TOKEN":
     raise ValueError("BOT_TOKEN not found")

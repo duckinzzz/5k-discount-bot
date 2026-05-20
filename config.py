@@ -11,6 +11,7 @@ load_dotenv(DOTENV_PATH)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
 ENV = os.getenv("ENV", "prod").lower()
+PROXY_URL = os.getenv("PROXY_URL") or None
 X5_WEB_COOKIES_PATH = BASE_DIR / "cookies-5ka-ru.txt"
 
 HTTP_TIMEOUT_SECONDS = 15.0

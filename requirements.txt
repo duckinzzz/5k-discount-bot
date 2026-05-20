@@ -5,3 +5,4 @@ aiohttp
 pdf417gen
 Pillow
 curl_cffi
+aiohttp_socks
